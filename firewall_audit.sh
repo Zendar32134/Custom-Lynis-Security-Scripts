@@ -1,8 +1,11 @@
-#
-# Custom Lynis Firewall Audit
-#
 
-TEST_ID="CUS-1001"
+#!/bin/bash
+
+################################################################################
+# Custom Firewall Security Audit
+# Test ID: CUST-1010
+# Platform: Fedora Linux
+################################################################################
 
 PASS=0
 WARN=0
@@ -10,17 +13,17 @@ FAIL=0
 
 pass() {
     echo "[PASS] $1"
-    PASS=$((PASS+1))
+    PASS=$((PASS + 1))
 }
 
 warn() {
     echo "[WARNING] $1"
-    WARN=$((WARN+1))
+    WARN=$((WARN + 1))
 }
 
 fail() {
     echo "[FAIL] $1"
-    FAIL=$((FAIL+1))
+    FAIL=$((FAIL + 1))
 }
 
 section() {
@@ -36,99 +39,92 @@ command_exists() {
 
 echo
 echo "############################################"
-echo "# CUSTOM LYNIS TEST : FIREWALL AUDIT"
-echo "# TEST ID : $TEST_ID"
+echo "# CUSTOM FIREWALL SECURITY AUDIT"
+echo "# TEST ID : CUST-1010"
 echo "############################################"
 
-section "Firewall Configuration Audit"
+section "Firewall Command Check"
 
-if ! command_exists firewall-cmd; then
-    fail "firewall-cmd command not found."
-    return
+if command_exists firewall-cmd; then
+    pass "firewall-cmd command is available."
+else
+    fail "firewall-cmd command is missing."
 fi
 
-pass "firewall-cmd command found."
+section "Firewalld Service Check"
 
-if systemctl list-unit-files | grep -q '^firewalld.service'; then
+if systemctl list-unit-files --no-legend |
+    grep -q '^firewalld\.service'; then
     pass "Firewalld service exists."
 else
-    fail "Firewalld service missing."
+    fail "Firewalld service not found."
 fi
 
-if systemctl is-enabled firewalld >/dev/null 2>&1; then
-    pass "Firewalld enabled."
+if systemctl is-active --quiet firewalld; then
+    pass "Firewalld service is running."
 else
-    warn "Firewalld not enabled."
+    warn "Firewalld service is not running."
 fi
 
-if systemctl is-active firewalld >/dev/null 2>&1; then
-    pass "Firewalld running."
+if systemctl is-enabled --quiet firewalld; then
+    pass "Firewalld is enabled at boot."
 else
-    fail "Firewalld not running."
+    warn "Firewalld is not enabled at boot."
 fi
 
-section "Firewall Zones"
+if command_exists firewall-cmd; then
 
-ACTIVE_ZONE=$(firewall-cmd --get-active-zones 2>/dev/null | head -n1)
+    section "Firewall Zones"
 
-if [ -n "$ACTIVE_ZONE" ]; then
-    pass "Active Zone : $ACTIVE_ZONE"
-else
-    warn "No active zone."
-fi
+    ZONE=$(firewall-cmd --get-active-zones 2>/dev/null |
+        head -n 1)
 
-DEFAULT_ZONE=$(firewall-cmd --get-default-zone 2>/dev/null)
+    if [ -n "$ZONE" ]; then
+        echo "Active Zone : $ZONE"
+    else
+        warn "No active firewall zone detected."
+    fi
 
-if [ -n "$DEFAULT_ZONE" ]; then
-    echo "Default Zone : $DEFAULT_ZONE"
-else
-    warn "Default zone unavailable."
-fi
+    DEFAULT_ZONE=$(firewall-cmd --get-default-zone 2>/dev/null)
 
-section "Enabled Services"
+    if [ -n "$DEFAULT_ZONE" ]; then
+        echo "Default Zone : $DEFAULT_ZONE"
+    fi
 
-SERVICES=$(firewall-cmd --list-services 2>/dev/null)
+    section "Enabled Services"
 
-if [ -n "$SERVICES" ]; then
-    echo "$SERVICES"
-else
-    pass "No enabled services."
-fi
+    firewall-cmd --list-services 2>/dev/null
 
-section "Open Ports"
+    section "Open Ports"
 
-PORTS=$(firewall-cmd --list-ports 2>/dev/null)
+    firewall-cmd --list-ports 2>/dev/null
 
-if [ -n "$PORTS" ]; then
-    echo "$PORTS"
-else
-    pass "No custom ports."
-fi
+    section "Rich Rules"
 
-section "Rich Rules"
+    RULES=$(firewall-cmd --list-rich-rules 2>/dev/null)
 
-RULES=$(firewall-cmd --list-rich-rules 2>/dev/null)
+    if [ -z "$RULES" ]; then
+        pass "No rich rules configured."
+    else
+        echo "$RULES"
+    fi
 
-if [ -n "$RULES" ]; then
-    echo "$RULES"
-else
-    pass "No rich rules."
-fi
+    section "Masquerading"
 
-section "Masquerading"
+    if firewall-cmd --query-masquerade >/dev/null 2>&1; then
+        warn "Masquerading is enabled."
+    else
+        pass "Masquerading is disabled."
+    fi
 
-if firewall-cmd --query-masquerade >/dev/null 2>&1; then
-    warn "Masquerading enabled."
-else
-    pass "Masquerading disabled."
-fi
+    section "Forwarding"
 
-section "Forwarding"
+    if firewall-cmd --query-forward >/dev/null 2>&1; then
+        warn "Forwarding is enabled."
+    else
+        pass "Forwarding is disabled."
+    fi
 
-if firewall-cmd --query-forward >/dev/null 2>&1; then
-    warn "Forwarding enabled."
-else
-    pass "Forwarding disabled."
 fi
 
 section "Listening TCP/UDP Ports"
@@ -136,37 +132,15 @@ section "Listening TCP/UDP Ports"
 if command_exists ss; then
     ss -tuln
 else
-    warn "'ss' command unavailable."
-fi
-
-section "Dangerous Ports"
-
-DANGEROUS_PORTS=(21 23 69)
-FOUND=0
-
-for PORT in "${DANGEROUS_PORTS[@]}"
-do
-    if echo "$PORTS" | grep -qw "${PORT}/tcp"; then
-        warn "Dangerous TCP Port : $PORT"
-        FOUND=1
-    fi
-
-    if echo "$PORTS" | grep -qw "${PORT}/udp"; then
-        warn "Dangerous UDP Port : $PORT"
-        FOUND=1
-    fi
-done
-
-if [ "$FOUND" -eq 0 ]; then
-    pass "No dangerous ports detected."
+    warn "ss command is not available."
 fi
 
 section "Firewall Backend"
 
 if command_exists nft; then
-    pass "nftables available."
+    pass "nftables command is available."
 else
-    warn "nft command missing."
+    warn "nft command is not available."
 fi
 
 section "Audit Summary"
@@ -176,5 +150,4 @@ echo "Warnings : $WARN"
 echo "Failed   : $FAIL"
 
 echo
-echo "Finished Firewall Audit"
-echo
+echo "Finished Firewall Security Audit"
