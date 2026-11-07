@@ -1,10 +1,11 @@
-#
-# Custom Lynis SSH Audit
-#
 
-TEST_ID="CUS-1002"
+#!/bin/bash
 
-CONFIG="/etc/ssh/sshd_config"
+################################################################################
+# Custom SSH Security Audit
+# Test ID: CUST-1020
+# Platform: Fedora Linux
+################################################################################
 
 PASS=0
 WARN=0
@@ -12,17 +13,17 @@ FAIL=0
 
 pass() {
     echo "[PASS] $1"
-    PASS=$((PASS+1))
+    PASS=$((PASS + 1))
 }
 
 warn() {
     echo "[WARNING] $1"
-    WARN=$((WARN+1))
+    WARN=$((WARN + 1))
 }
 
 fail() {
     echo "[FAIL] $1"
-    FAIL=$((FAIL+1))
+    FAIL=$((FAIL + 1))
 }
 
 section() {
@@ -32,128 +33,116 @@ section() {
     echo "========================================"
 }
 
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-get_value() {
-
-    local KEY="$1"
-
-    if [ ! -f "$CONFIG" ]; then
-        echo ""
-        return
-    fi
-
-    grep -Ei "^[[:space:]]*$KEY" "$CONFIG" | tail -n1 | awk '{print $2}'
-}
-
 echo
 echo "############################################"
-echo "# CUSTOM LYNIS TEST : SSH AUDIT"
-echo "# TEST ID : $TEST_ID"
+echo "# CUSTOM SSH SECURITY AUDIT"
+echo "# TEST ID : CUST-1020"
 echo "############################################"
 
-section "SSH Protocol Security Audit"
+section "OpenSSH Installation Check"
 
 if rpm -q openssh-server >/dev/null 2>&1; then
-    pass "OpenSSH Server installed."
+    pass "OpenSSH server is installed."
 else
-    fail "OpenSSH Server not installed."
+    fail "OpenSSH server is not installed."
 fi
 
-if systemctl list-unit-files | grep -q '^sshd.service'; then
+section "SSH Service Check"
+
+if systemctl list-unit-files --no-legend |
+    grep -q '^sshd\.service'; then
     pass "sshd service exists."
 else
-    fail "sshd service missing."
+    fail "sshd service not found."
 fi
 
-if systemctl is-active sshd >/dev/null 2>&1; then
-    pass "sshd service running."
+if systemctl is-active --quiet sshd; then
+    pass "SSH service is running."
 else
-    warn "sshd service not running."
+    warn "SSH service is not running."
 fi
 
-if systemctl is-enabled sshd >/dev/null 2>&1; then
-    pass "sshd enabled at boot."
+if systemctl is-enabled --quiet sshd; then
+    pass "SSH service is enabled at boot."
 else
-    warn "sshd not enabled at boot."
+    warn "SSH service is not enabled at boot."
 fi
 
-section "SSH Port"
+section "SSH Configuration Audit"
 
-PORT=$(get_value Port)
+if command -v sshd >/dev/null 2>&1; then
 
-if [ -z "$PORT" ]; then
-    PORT=22
-fi
+    # Read the effective SSH configuration.
+    SSH_CONFIG=$(sshd -T 2>/dev/null)
 
-echo "Listening Port : $PORT"
+    if [ -n "$SSH_CONFIG" ]; then
 
-section "SSH Configuration"
+        pass "Effective SSH configuration is readable."
 
-PARAMETERS=(
-PermitRootLogin
-PasswordAuthentication
-PubkeyAuthentication
-PermitEmptyPasswords
-MaxAuthTries
-LoginGraceTime
-ClientAliveInterval
-ClientAliveCountMax
-X11Forwarding
-AllowUsers
-AllowGroups
-DenyUsers
-DenyGroups
-)
+        # Check root login
+        if echo "$SSH_CONFIG" |
+            grep -q '^permitrootlogin no$'; then
+            pass "Root login is disabled."
+        else
+            warn "Root login is not disabled."
+        fi
 
-for ITEM in "${PARAMETERS[@]}"
-do
-    VALUE=$(get_value "$ITEM")
+        # Check password authentication
+        if echo "$SSH_CONFIG" |
+            grep -q '^passwordauthentication no$'; then
+            pass "Password authentication is disabled."
+        else
+            warn "Password authentication is enabled."
+        fi
 
-    if [ -z "$VALUE" ]; then
-        echo "$ITEM : Default"
+        # Check public key authentication
+        if echo "$SSH_CONFIG" |
+            grep -q '^pubkeyauthentication yes$'; then
+            pass "Public-key authentication is enabled."
+        else
+            warn "Public-key authentication is not enabled."
+        fi
+
+        # Check empty passwords
+        if echo "$SSH_CONFIG" |
+            grep -q '^permitemptypasswords no$'; then
+            pass "Empty passwords are disabled."
+        else
+            warn "Empty passwords are not disabled."
+        fi
+
+        # Display configured SSH port
+        SSH_PORT=$(echo "$SSH_CONFIG" |
+            awk '$1 == "port" {print $2; exit}')
+
+        echo "Configured SSH Port : ${SSH_PORT:-Unknown}"
+
+        # Check maximum authentication attempts
+        MAX_AUTH=$(echo "$SSH_CONFIG" |
+            awk '$1 == "maxauthtries" {print $2; exit}')
+
+        if [ -n "$MAX_AUTH" ] && [ "$MAX_AUTH" -le 4 ]; then
+            pass "Maximum authentication attempts: $MAX_AUTH"
+        else
+            warn "Maximum authentication attempts require review."
+        fi
+
     else
-        echo "$ITEM : $VALUE"
+        warn "Unable to read effective SSH configuration."
+        echo "Check sshd configuration and host keys."
     fi
-done
 
-section "SSH Protocol"
-
-PROTO=$(get_value Protocol)
-
-if [ -z "$PROTO" ]; then
-    pass "Protocol Version 2 (Default)"
 else
-    echo "Protocol : $PROTO"
+    fail "sshd command is not available."
 fi
 
 section "SSH Host Keys"
 
-if ls /etc/ssh/ssh_host_*_key.pub >/dev/null 2>&1; then
-    ls /etc/ssh/ssh_host_*_key.pub
+if compgen -G '/etc/ssh/ssh_host_*_key' >/dev/null; then
+    pass "SSH host keys are available."
 else
-    warn "SSH Host Keys not found."
+    warn "SSH host keys were not found."
 fi
-
-section "Security Evaluation"
-
-ROOT=$(get_value PermitRootLogin)
-PASSAUTH=$(get_value PasswordAuthentication)
-EMPTY=$(get_value PermitEmptyPasswords)
-PUBKEY=$(get_value PubkeyAuthentication)
-X11=$(get_value X11Forwarding)
-
-[ "$ROOT" = "no" ] && pass "Root login disabled." || warn "Root login enabled."
-
-[ "$PASSAUTH" = "no" ] && pass "Password authentication disabled." || warn "Password authentication enabled."
-
-[ "$PUBKEY" = "yes" ] && pass "Public key authentication enabled." || warn "Public key authentication disabled."
-
-[ "$EMPTY" = "no" ] && pass "Empty passwords disabled." || warn "Empty passwords permitted."
-
-[ "$X11" = "no" ] && pass "X11 forwarding disabled." || warn "X11 forwarding enabled."
 
 section "Audit Summary"
 
@@ -162,5 +151,4 @@ echo "Warnings : $WARN"
 echo "Failed   : $FAIL"
 
 echo
-echo "Finished SSH Audit"
-echo
+echo "Finished SSH Security Audit"
